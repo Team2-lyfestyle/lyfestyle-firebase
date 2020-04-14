@@ -50,6 +50,9 @@ async function updateChatInfo(chatId, message) {
 */
 exports.sendChatNotificationsAndUpdateDB = functions.database.ref('messages/{chatId}')
     .onCreate( async (snapshot, context) => {
+        console.log('create')
+        return;
+        /*
         const chatId = context.params.chatId;
 
         // Get the message and userId who sent the message
@@ -77,7 +80,8 @@ exports.sendChatNotificationsAndUpdateDB = functions.database.ref('messages/{cha
         await Promise.all(notifsPromises);
         pushTokensPromises = await Promise.all(pushTokensPromises);
         for (let obj of pushTokensPromises) {
-            pushTokens = Object.assign(pushTokens, obj); // spread syntax (...obj) does not work with firebase?
+            // spread syntax (...obj) does not work with firebase?
+            pushTokens = Object.assign(pushTokens, obj); 
         }
 
         // Send the message to each push token
@@ -107,5 +111,144 @@ exports.sendChatNotificationsAndUpdateDB = functions.database.ref('messages/{cha
             }
         }
         await Promise.all(promises);
+        */
     });
 
+
+
+function addChatSessionToUserChats(userId, chatId) {
+    let userRef = admin.database().ref('users/' + userId + '/chats');
+    return userRef.update({
+        [chatId]: true
+    });
+}
+
+
+exports.updateUserInfoOnChatSessionCreate = functions.database.ref('chats/{chatId}')
+    .onCreate( async (snapshot, context) => {
+        let promises = [];
+        console.log('On create event');
+        let chatSession = snapshot.val();
+        for (let member of Object.keys(chatSession.members)) {
+            promises.push(addChatSessionToUserChats(member, snapshot.key));
+        }
+        return Promise.all(promises);
+    });
+
+
+async function updateNotifsOnNewMessage(snapshot, context) {
+    let promises = [];
+    let senderId = context.auth.uid;
+
+    // Get an object containing the users to update notifs for
+    let recipients = await admin.database().ref(`chats/${context.params.chatId}`).once('value');
+    recipients = recipients.val().members;
+    for (let userId of Object.keys(recipients)) {
+        if (userId === senderId) {
+            // Do nothing, don't need to notify the sender
+            continue;
+        }
+        let notifsRef = admin.database().ref(`notifs/${userId}/chats/${context.params.chatId}`);
+        promises.push(notifsRef.update(snapshot.val()));
+    }
+    return Promise.all(promises);
+}
+
+
+exports.updateNotifsOnNewMessage = functions.database.ref('messages/{chatId}/{messageId}')
+    .onCreate( async (snapshot, context) => {
+        let promises = [];
+        let senderId = context.auth.uid;
+
+        // Get an object containing the users to update notifs for
+        let recipients = await admin.database().ref(`chats/${context.params.chatId}`).once('value');
+        recipients = recipients.val().members;
+        for (let userId of Object.keys(recipients)) {
+            if (senderId && userId === senderId) {
+                // Do nothing, don't need to notify the sender
+                continue;
+            }
+            let notifsRef = admin.database().ref(`notifs/${userId}/chats/${context.params.chatId}`);
+            promises.push(
+                notifsRef.child(context.params.messageId).set(snapshot.val())
+            );
+        }
+        return Promise.all(promises);
+    });
+
+exports.updateChatSessionOnNewMessage = functions.database.ref('messages/{chatId}/{messageId}')
+    .onCreate( async (snapshot, context) => {
+        let message = snapshot.val();
+        let chatRef = admin.database().ref(`chats/${context.params.chatId}`);
+        return chatRef.update({
+            lastMessageText: message.text,
+            lastMessageAt: message.createdAt,
+        });
+    });
+
+
+/*
+    Create a new chatSession:
+    updates chats to include new session.
+    updates users to include new chat id
+*/
+/*
+DOESNT WORK IDK WHY
+
+exports.createNewChatSession = functions.https.onCall(async (data, context) => {
+    const senderId = context.auth.uid;
+    let timestamp = (new Date()).toISOString();
+
+    // Update chats
+    let chatsRef = admin.database().ref('chats').push();
+    chatsRef.set({
+        members: data.members,
+        lastMessage: data.message.message,
+        timestamp: timestamp
+    });
+
+    // Update messages
+    let messagesRef = admin.database().ref('messages');
+    messagesRef.update({
+        [chatsRef.key]: {
+            message: data.message.message,
+            name: senderId,
+            timestamp: timestamp
+        }
+    });
+
+    // Update users
+    for (let member of data.members) {
+        addChatSessionToUserChats(member, chatsRef.key);
+    }
+
+    return { chatId: chatsRef.key };
+});
+
+
+
+exports.sendMessage = functions.https.onCall((data, context) => {
+    const senderId = context.auth.uid;
+    let timestamp = (new Date()).toISOString();
+
+    // Update chats
+    let chatsRef = admin.database().ref('chats/' + data.chatId);
+    chatsRef.update({
+        members: data.members,
+        lastMessage: data.message.message,
+        timestamp: timestamp
+    });
+
+    // Update messages
+    let messagesRef = admin.database().ref('messages/' + data.chatId);
+    let newMessageRef = messagesRef.push({
+        [chatsRef.key]: {
+            message: data.message.message,
+            name: senderId,
+            timestamp: timestamp
+        }
+    });
+    
+    return { messageId: newMessageRef.key };
+});
+*/
