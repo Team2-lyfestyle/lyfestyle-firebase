@@ -116,13 +116,63 @@ exports.sendChatNotificationsAndUpdateDB = functions.database.ref('messages/{cha
 
 
 
+exports.updateFriendsOnFriendCreate = functions.database.ref('users/{userId}/friends/{friendId}')
+    .onCreate( async (snapshot, context) => {
+        let friendRef = admin.database().ref(`users/${context.params.friendId}/friends/${context.params.userId}`);
+
+        // Clear any friend requests sent or received between these two users
+        let ref1 = admin.database().ref(`users/${context.params.friendId}/friendRequestsSent/${context.params.userId}`);
+        let ref2 = admin.database().ref(`users/${context.params.friendId}/friendRequestsRcvd/${context.params.userId}`);
+        let ref3 = admin.database().ref(`users/${context.params.userId}/friendRequestsSent/${context.params.friendId}`);
+        let ref4 = admin.database().ref(`users/${context.params.userId}/friendRequestsRcvd/${context.params.friendId}`);
+        return Promise.all([friendRef.set(true), ref1.remove(), ref2.remove(), ref3.remove(), ref4.remove()]);
+    });
+
+
+exports.updateFriendRequestOnSend = functions.database.ref('users/{userId}/friendRequestsSent/{otherUserId}')
+    .onCreate( async (snapshot, context) => {
+        let otherUser = (await admin.database().ref(`users/${context.params.otherUserId}`).once('value')).val();
+
+        // If other user has sent a friend request as well, then just add the two users as friends
+        if (otherUser.friendRequestsSent && context.params.userId in otherUser.friendRequestsSent) {
+            let otherUserRef = admin.database().ref(`users/${context.params.otherUserId}/friends/${context.params.userId}`);
+            let userRef = admin.database().ref(`users/${context.params.userId}/friends/${context.params.otherUserId}`);
+
+            // Clear any friend requests sent or received between these two users
+            let ref1 = admin.database().ref(`users/${context.params.otherUserId}/friendRequestsSent/${context.params.userId}`);
+            let ref2 = admin.database().ref(`users/${context.params.otherUserId}/friendRequestsRcvd/${context.params.userId}`);
+            let ref3 = admin.database().ref(`users/${context.params.userId}/friendRequestsSent/${context.params.otherUserId}`);
+            let ref4 = admin.database().ref(`users/${context.params.userId}/friendRequestsRcvd/${context.params.otherUserId}`);
+            return Promise.all([userRef.set(true), otherUserRef.set(true), ref1.remove(), ref2.remove(), ref3.remove(), ref4.remove()]);
+        }
+        // Otherwise, just add to friendRequestsRcvd
+        else {
+            let otherUserRef = admin.database().ref(`users/${context.params.otherUserId}/friendRequestsRcvd/${context.params.userId}`);
+            return otherUserRef.set(true);
+        }
+    });
+
+
+exports.updateFriendRequestRcvdOnSentDelete = functions.database.ref('users/{userId}/friendRequestsSent/{otherUserId}')
+    .onDelete( async (snapshot, context) => {
+        let otherUserRef = admin.database().ref(`users/${context.params.otherUserId}/friendRequestsRcvd/${context.params.userId}`);
+        return otherUserRef.remove();
+    });
+
+
+exports.updateFriendOnFriendDelete = functions.database.ref('users/{userId}/friends/{otherUserId}')
+    .onDelete( async (snapshot, context) => {
+        let otherUserRef = admin.database().ref(`users/${context.params.otherUserId}/friends/${context.params.userId}`);
+        return otherUserRef.remove();
+    });
+
+
 function addChatSessionToUserChats(userId, chatId) {
     let userRef = admin.database().ref('users/' + userId + '/chats');
     return userRef.update({
         [chatId]: true
     });
 }
-
 
 exports.updateUserInfoOnChatSessionCreate = functions.database.ref('chats/{chatId}')
     .onCreate( async (snapshot, context) => {
